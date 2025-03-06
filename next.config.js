@@ -1,7 +1,6 @@
-// next.config.js
 module.exports = {
   experimental: {
-    serverActions: true, // ✅ Ensure this is enabled
+    serverActions: {}, // Using an object enables server actions
   },
   webpack: (config, { isServer }) => {
     if (!isServer) {

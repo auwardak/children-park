@@ -14,8 +14,43 @@ export default function VisitorsPage() {
   const [selectedVisitor, setSelectedVisitor] = useState(null);
   const [leavingTime, setLeavingTime] = useState("");
   const [fee, setFee] = useState(0);
-  const [hourlyRate, setHourlyRate] = useState(5); // Now configurable via input
+  const [hourlyRate, setHourlyRate] = useState(100);
   const [isPending, startTransition] = useTransition();
+
+  // Fetch stored hourly rate from the API on mount
+  useEffect(() => {
+    async function fetchHourlyRate() {
+      try {
+        const res = await fetch("/api/settings?key=hourlyRate");
+        if (res.status === 200) {
+          const data = await res.json();
+          setHourlyRate(parseFloat(data.value));
+        } else {
+          // No record found: user can input a new value.
+          console.log("No hourly rate set, please provide one.");
+        }
+      } catch (error) {
+        console.error("Error fetching hourly rate:", error);
+      }
+    }
+    fetchHourlyRate();
+  }, []);
+
+  // Save hourly rate to the database when the button is clicked
+  const updateHourlyRate = async (newRate) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "hourlyRate", value: newRate }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update hourly rate");
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const fetchVisitors = async () => {
     try {
@@ -166,14 +201,23 @@ export default function VisitorsPage() {
       {/* Header with Visitor Tracker title and Hourly Rate input on the top right */}
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Visitor Tracker</h1>
-        <div className="flex items-center">
+        <div className="flex items-center space-x-2">
           <label className="mr-2 text-sm">Hourly Rate:</label>
           <input
             type="number"
             value={hourlyRate}
-            onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
+            onChange={(e) => {
+              const newRate = parseFloat(e.target.value) || 0;
+              setHourlyRate(newRate);
+            }}
             className="p-2 border rounded w-20"
           />
+          <button
+            onClick={() => updateHourlyRate(hourlyRate)}
+            className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            Update
+          </button>
         </div>
       </div>
 
