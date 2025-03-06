@@ -1,7 +1,7 @@
-// app/(dashboard)/visitors/page.js
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import VisitorForm from "@/components/VisitorForm";
+import { addTransaction } from "@/actions/transactions";
 
 export default function VisitorsPage() {
   const [visitors, setVisitors] = useState([]);
@@ -10,6 +10,12 @@ export default function VisitorsPage() {
   );
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [selectedVisitor, setSelectedVisitor] = useState(null);
+  const [leavingTime, setLeavingTime] = useState("");
+  const [fee, setFee] = useState(0);
+  const [hourlyRate, setHourlyRate] = useState(5); // Now configurable via input
+  const [isPending, startTransition] = useTransition();
 
   const fetchVisitors = async () => {
     try {
@@ -26,38 +32,151 @@ export default function VisitorsPage() {
     fetchVisitors();
   }, [dateFilter, page]);
 
-  const handleMarkLeft = async (id, entry_time, date) => {
-    try {
-      // Default leaving time is the current time (in HH:MM format)
-      const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5); // e.g. "14:30"
-      // Prompt the user for a leaving time (defaulting to current time)
-      const leavingTime = window.prompt(
-        "Enter leaving time (HH:MM):",
-        currentTime
-      );
-      if (!leavingTime) return; // If cancelled, do nothing
+  const calculateDurationAndFee = (entry, exit) => {
+    const diffMs = exit - entry;
+    const minutes = Math.floor(diffMs / 60000);
+    const hours = minutes / 60;
+    return {
+      duration: minutes > 60 ? `${hours.toFixed(1)} hours` : `${minutes} mins`,
+      fee: (hours * hourlyRate).toFixed(2),
+    };
+  };
 
-      const formData = new FormData();
-      formData.append("id", id);
-      formData.append("leaving_time", leavingTime);
-      formData.append("date", date);
-      formData.append("entry_time", entry_time); // in case API needs it
+  const handleMarkLeftInit = (visitor) => {
+    const now = new Date();
+    const currentTime = now.toTimeString().slice(0, 5);
+    const exitDate = new Date(`${visitor.date}T${currentTime}`);
+    const entryDate = new Date(`${visitor.date}T${visitor.entry_time}`);
+
+    const { duration, fee } = calculateDurationAndFee(entryDate, exitDate);
+
+    setSelectedVisitor(visitor);
+    setLeavingTime(currentTime);
+    setFee(fee);
+    setShowExitModal(true);
+  };
+
+  const handleConfirmExit = async () => {
+    try {
+      // Update visitor leaving time
+      const visitorData = new FormData();
+      visitorData.append("id", selectedVisitor.id);
+      visitorData.append("leaving_time", leavingTime);
+      visitorData.append("date", selectedVisitor.date);
+      visitorData.append("entry_time", selectedVisitor.entry_time);
 
       const res = await fetch("/api/visitors/markLeft", {
         method: "POST",
-        body: formData,
+        body: visitorData,
       });
+
       if (!res.ok) throw new Error("Failed to mark visitor as left");
-      fetchVisitors(); // refresh the list after updating
+
+      // Create transaction
+      const transactionData = new FormData();
+      transactionData.append("type", "income");
+      transactionData.append("date", selectedVisitor.date);
+      transactionData.append(
+        "source",
+        `Visitor Fee for ${selectedVisitor.name}`
+      );
+      transactionData.append("amount", fee);
+
+      startTransition(async () => {
+        await addTransaction(transactionData);
+        fetchVisitors();
+      });
+
+      setShowExitModal(false);
     } catch (error) {
-      console.error(error);
+      console.error("Error processing exit:", error);
     }
   };
 
+  // Exit Confirmation Modal
+  const ExitModal = () => {
+    if (!selectedVisitor) return null;
+
+    const entryDate = new Date(
+      `${selectedVisitor.date}T${selectedVisitor.entry_time}`
+    );
+    const exitDate = new Date(`${selectedVisitor.date}T${leavingTime}`);
+    const { duration } = calculateDurationAndFee(entryDate, exitDate);
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <h3 className="text-xl font-bold mb-4">Confirm Visitor Exit</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Leaving Time
+              </label>
+              <input
+                type="time"
+                value={leavingTime}
+                onChange={(e) => {
+                  setLeavingTime(e.target.value);
+                  const newExit = new Date(
+                    `${selectedVisitor.date}T${e.target.value}`
+                  );
+                  const { fee } = calculateDurationAndFee(entryDate, newExit);
+                  setFee(fee);
+                }}
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-medium">Duration</p>
+                <p className="p-2 bg-gray-50 rounded">{duration}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Fee</p>
+                <input
+                  type="number"
+                  value={fee}
+                  onChange={(e) => setFee(e.target.value)}
+                  className="p-2 border rounded bg-gray-50 w-full"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowExitModal(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmExit}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Confirm Exit
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Visitor Tracker</h1>
+    <div className="p-6 relative">
+      {/* Header with Visitor Tracker title and Hourly Rate input on the top right */}
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Visitor Tracker</h1>
+        <div className="flex items-center">
+          <label className="mr-2 text-sm">Hourly Rate:</label>
+          <input
+            type="number"
+            value={hourlyRate}
+            onChange={(e) => setHourlyRate(parseFloat(e.target.value) || 0)}
+            className="p-2 border rounded w-20"
+          />
+        </div>
+      </div>
+
       <VisitorForm onSuccess={fetchVisitors} />
 
       <div className="mt-4">
@@ -110,14 +229,8 @@ export default function VisitorsPage() {
                       <span className="text-green-600">Exited</span>
                     ) : (
                       <button
-                        onClick={() =>
-                          handleMarkLeft(
-                            visitor.id,
-                            visitor.entry_time,
-                            visitor.date
-                          )
-                        }
-                        className="bg-blue-600 text-white px-3 py-1 rounded"
+                        onClick={() => handleMarkLeftInit(visitor)}
+                        className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
                       >
                         Mark as Left
                       </button>
@@ -129,7 +242,7 @@ export default function VisitorsPage() {
           </tbody>
         </table>
       </div>
-
+      {showExitModal && <ExitModal />}
       {/* Pagination Controls */}
       <div className="flex justify-between items-center mt-4">
         <button
